@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Local AI Speed &amp; Polish Handbook — Asdale Dynamics, LLC</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="kicker">The Local AI Speed &amp; Polish Handbook</p>
+    <h1>Make your sluggish local AI feel <em>snappy</em>.</h1>
+    <p class="sub">Turbo settings, cache reuse, smaller-model shortcuts, CPU vs GPU pinning,
+    quantization in plain English — and a stopwatch test with honest scorecards.
+    No installs beyond Ollama. No keys. No jargon talk-down.</p>
+    <div class="cta">
+      <a class="btn" href="#quick-win">Do the 10-minute quick win</a>
+      <a class="btn ghost" href="#hotel-test">Run the hotel-AI speed test</a>
+    </div>
+    <p class="credit">A companion to the <em>Local AI Handbook</em> (setup) — this one is about speed.<br>
+    By Dylan Asdale &middot; published by <strong>Asdale Dynamics, LLC</strong></p>
+  </div>
+</header>
+
+<nav class="toc wrap">
+  <a href="#chapter-0">0 · Start here</a>
+  <a href="#chapter-1">1 · Why is it slow?</a>
+  <a href="#chapter-2">2 · Turbo settings</a>
+  <a href="#chapter-3">3 · Cache reuse</a>
+  <a href="#chapter-4">4 · Smaller models</a>
+  <a href="#chapter-5">5 · CPU vs GPU</a>
+  <a href="#chapter-6">6 · Quantization</a>
+  <a href="#chapter-7">7 · Hotel-AI speed test</a>
+  <a href="#chapter-8">8 · Month refresh</a>
+  <a href="#scripts">Scripts</a>
+</nav>
+
+<main class="wrap">
+
+<section class="card" id="quick-win">
+  <h2>Chapter 0 — Start here: the 10-minute quick win</h2>
+  <p><strong>The one-sentence version:</strong> keep the model warm, shrink the
+  context window to what you actually use, drop to the smallest model that
+  still answers well, and time it so you can <em>see</em> the difference.</p>
+  <ol>
+    <li><strong>Keep the model loaded (2 min).</strong> Ollama unloads after 5
+    minutes of quiet — that's the "first message takes forever" feeling.
+    <code>OLLAMA_KEEP_ALIVE=1h ollama serve</code></li>
+    <li><strong>Shrink the context (3 min).</strong> Reserved context costs
+    speed even when unused. Everyday Q&amp;A: <code>"options": {"num_ctx": 2048}</code>
+    (or 4096 for longer documents).</li>
+    <li><strong>Try the smaller model (3 min).</strong>
+    <code>ollama run llama3.2:3b</code> — if it answers your daily questions
+    well, that's your new daily driver: roughly 2–3× faster than an 8B.</li>
+    <li><strong>Time it (2 min).</strong>
+    <code>bash scripts/bench-ollama.sh llama3.2:3b</code> — write the numbers
+    down, change one thing, run it again. That's the whole secret of this book.</li>
+  </ol>
+</section>
+
+<section class="card" id="chapter-1">
+  <h2>Chapter 1 — Why is it slow? (Diagnose before you tune)</h2>
+  <table>
+    <thead><tr><th>Symptom</th><th>It's called</th><th>Chapter that fixes it</th></tr></thead>
+    <tbody>
+      <tr><td>First message takes forever, then it's fine</td><td>Cold start (model unloaded)</td><td>3 — Cache reuse</td></tr>
+      <tr><td>Every message is slow, even simple ones</td><td>Throughput (hardware/model too heavy)</td><td>2, 4, 6</td></tr>
+      <tr><td>Types fast but pauses mid-answer</td><td>Memory pressure / CPU-GPU thrash</td><td>5, 6</td></tr>
+    </tbody>
+  </table>
+  <p>The three numbers to know: <strong>time to first token</strong> (what
+  "feels instant" is made of), <strong>tokens per second</strong> (how fast the
+  words flow), and <strong>total time</strong>. Every tuning chapter targets
+  these, and the stopwatch in chapter 7 is the referee.</p>
+</section>
+
+<section class="card" id="chapter-2">
+  <h2>Chapter 2 — Turbo settings (the ones that actually matter)</h2>
+  <dl class="settings">
+    <dt><code>OLLAMA_KEEP_ALIVE</code> — warm engine</dt>
+    <dd>Stay-loaded timer. Default 5m of quiet, then unload (=&gt; slow first
+    message back). Set <code>1h</code> for a whole working session.</dd>
+    <dt><code>num_ctx</code> — context window (the quiet speed killer)</dt>
+    <dd>Every reserved token costs memory and compute even if unused. 2048 for
+    Q&amp;A, 4096–8192 for document work. Per model with
+    <code>/set parameter num_ctx 2048</code>.</dd>
+    <dt><code>OLLAMA_FLASH_ATTENTION</code> — free speed, with a caveat</dt>
+    <dd>Faster attention implementation. Try it; if the stopwatch doesn't
+    improve, drop it without guilt.</dd>
+    <dt><code>OLLAMA_KV_CACHE_TYPE=q8_0</code> — half the scratchpad, none the wiser</dt>
+    <dd>Keeps the KV cache at 8-bit: ~87% of the memory, essentially no quality
+    cost. Use <code>q4_0</code> (~48%) when every byte counts.</dd>
+  </dl>
+  <p>Make them permanent with a systemd override
+  (<code>sudo systemctl edit ollama</code>) — the full snippet is in
+  <code>docs/02-turbo-settings.md</code>.</p>
+</section>
+
+<section class="card" id="chapter-3">
+  <h2>Chapter 3 — Cache reuse: never pay the same tax twice</h2>
+  <ul>
+    <li><strong>Cache 1 — the model itself.</strong> Pin it with one API call:
+    <code>{"keep_alive": "1h"}</code>. Check who's loaded with <code>ollama ps</code>.</li>
+    <li><strong>Cache 2 — repeated beginnings.</strong> Same system prompt +
+    same document first, question last → Ollama reuses the work. Reword or
+    reorder the shared part and you break the cache (and pay again).</li>
+    <li><strong>Cache 3 — downloads.</strong> Both-daily drivers pinned means
+    neither ever pays load tax. Warm-up ritual after reboot: one throwaway
+    question. 20 seconds, done.</li>
+  </ul>
+</section>
+
+<section class="card" id="chapter-4">
+  <h2>Chapter 4 — Smaller-model shortcuts: the ladder</h2>
+  <table>
+    <thead><tr><th>Rung</th><th>Size</th><th>Same-machine feel</th><th>Right job</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>0.5–1B</td><td>Instant</td><td>Quick facts, rewrites, classification</td></tr>
+      <tr><td>2</td><td>3B</td><td>Snappy</td><td>Everyday Q&amp;A, summaries, emails</td></tr>
+      <tr><td>3</td><td>7–8B</td><td>Comfortable</td><td>Long drafting, trickier reasoning</td></tr>
+      <tr><td>4</td><td>13B+</td><td>Slow</td><td>Specialist work, dedicated hardware</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The pairing habit:</strong> keep a quick model (1B/3B) for 90% of
+  messages and a deep model (7–8B) for the rest. Start quick; re-ask deep only
+  when the answer feels thin. <strong>Don't shrink past usefulness:</strong>
+  repeated sentence shapes and forgetfulness mean go up a rung.</p>
+</section>
+
+<section class="card" id="chapter-5">
+  <h2>Chapter 5 — CPU vs GPU pinning (laptops, Pis, and where the work happens)</h2>
+  <p>Run <code>ollama ps</code> and read the <code>PROCESSOR</code> column:</p>
+  <ul>
+    <li><code>100% GPU</code> — best case. You're done; enjoy.</li>
+    <li><code>CPU</code> — fine for small models, slow for big ones. On laptops
+    with efficiency/performance cores, pin with
+    <code>taskset -c 4-7 ollama run ...</code>.</li>
+    <li><code>70%/30% CPU/GPU</code> — <strong>the often-missed speed bug.</strong>
+    Splits feel far slower than the numbers suggest. Fix by dropping
+    <code>num_gpu</code> (fewer layers on a nearly-full GPU beats a constant
+    spill), smaller quant, or smaller <code>num_ctx</code>.</li>
+  </ul>
+  <p>Raspberry Pi: all-CPU world; small quantized 1B–3B models are genuinely
+  pleasant there. Apple Silicon Macs: unified memory means no pinning at all —
+  chapter 4 is your whole sport.</p>
+</section>
+
+<section class="card" id="chapter-6">
+  <h2>Chapter 6 — Quantization in plain English</h2>
+  <p><strong>Quantization = storing the model with fewer decimal places.</strong>
+  Smaller file, less RAM, faster loads; each extra compression costs a little
+  quality. Decode the codes: <code>q4_K_M</code> = 4-bit K-quant, medium
+  rounding care — the everyday sweet spot.</p>
+  <table>
+    <thead><tr><th>Quant</th><th>~Size (8B)</th><th>Quality feel</th><th>Who it's for</th></tr></thead>
+    <tbody>
+      <tr><td>q4_K_M</td><td>~4.7 GB</td><td>Good — fine for everyday</td><td>Laptops, Pis, GPUs</td></tr>
+      <tr><td>q5_K_M</td><td>~5.7 GB</td><td>Slightly sharper</td><td>When RAM allows</td></tr>
+      <tr><td>q8_0</td><td>~8.5 GB</td><td>Hard to distinguish from full</td><td>Memory-rich machines</td></tr>
+      <tr><td>q2/q3</td><td>~2–3.5 GB</td><td>Gets confidently wrong</td><td>Only when nothing else fits</td></tr>
+    </tbody>
+  </table>
+  <p>Two rules: below q4 quality drops fast; above q5 gains get tiny. And
+  <strong>a smaller model at a higher quant often beats a bigger model at a
+  lower quant</strong> in the same memory.</p>
+</section>
+
+<section class="card" id="hotel-test">
+  <h2>Chapter 7 — The hotel-AI speed test (stopwatches and scorecards)</h2>
+  <p>Feelings are terrible measuring tools. This test borrows what a hotel
+  front desk cares about — run by hand with any stopwatch, or run the script:</p>
+  <pre><code class="cmd">bash scripts/hotel-speed-test.sh llama3.2:3b --out scorecard.txt</code></pre>
+  <table>
+    <thead><tr><th>Event</th><th>What it measures</th><th>What verifies it</th></tr></thead>
+    <tbody>
+      <tr><td>1. Cold check-in</td><td>Fully cold interaction: server + load + answer</td><td>keep-alive fixes (ch. 3)</td></tr>
+      <tr><td>2. Warm wake-up</td><td>"You phoned ahead" — model already loaded</td><td>warm-start bonus (ch. 3)</td></tr>
+      <tr><td>3. Follow-up</td><td>"And one more thing…" — cached conversation</td><td>prompt cache intact (ch. 3)</td></tr>
+      <tr><td>4. Big luggage</td><td>A few pages of text + one question</td><td>num_ctx / KV cache (ch. 2, 6)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The rules:</strong> one change between scorecards · same prompts
+  and machine state · write it down · <em>no improvement is a result, not a
+  failure.</em> A scorecard you can't compare is a story, not a test.</p>
+</section>
+
+<section class="card" id="chapter-8">
+  <h2>Chapter 8 — The month-refresh ritual (15 minutes)</h2>
+  <ol>
+    <li><strong>Update Ollama.</strong> <code>curl -fsSL https://ollama.com/install.sh | sh</code></li>
+    <li><strong>Look at the shelf.</strong> <code>ollama list</code> — prune
+    never-touched models; check for newer/smaller tags of favorites.</li>
+    <li><strong>Re-run the hotel test.</strong> Watch for regressions, not records.</li>
+    <li><strong>Health panel.</strong> <code>bash scripts/perf-set-check.sh</code> ·
+    <code>ollama ps</code> · <code>df -h /</code> · <code>free -h</code></li>
+    <li><strong>Prune settings drift.</strong> Are the Big Four the values that
+    <em>measured</em> well, or just felt interesting?</li>
+    <li><strong>Log one line.</strong> The scorecards are the log.</li>
+  </ol>
+  <p>Set a calendar reminder titled <strong>"AI pit stop."</strong> Short
+  ritual, honest stopwatches, small keeps.</p>
+</section>
+
+<section class="card" id="scripts">
+  <h2>The scripts (tested, graceful, no keys)</h2>
+  <table>
+    <thead><tr><th>Script</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/bench-ollama.sh MODEL</code></td><td>Times first-token delay and tokens/second for a model; <code>--warmup</code> to pin it; <code>--save FILE</code> to log cards.</td></tr>
+      <tr><td><code>scripts/hotel-speed-test.sh MODEL</code></td><td>The four-event stopwatch battery and honest scorecard; <code>--out FILE</code> appends.</td></tr>
+      <tr><td><code>scripts/perf-set-check.sh</code></td><td>Your speed-relevant settings, loaded models, and memory at a glance.</td></tr>
+    </tbody>
+  </table>
+  <p>If Ollama isn't running or installed, the scripts tell you exactly how to
+  fix it — no half-finished benchmarks. Everything is plain bash + curl +
+  standard Unix tools.</p>
+</section>
+
+<section class="card muted">
+  <h2>Where to go next</h2>
+  <p>The full walking tour with copy-paste commands lives in
+  <a href="../docs/"><code>docs/</code></a> — start with
+  <code>docs/00-start-here.md</code>, then follow the trail to chapter 8.
+  This page is the carry-on version.</p>
+  <p class="fine">Healthcare note: these tools are for education and daily
+  paperwork, never medical advice. MIT License — Copyright (c) 2026 Asdale
+  Dynamics, LLC.</p>
+</section>
+
+<footer>
+  <p>The Local AI Speed &amp; Polish Handbook · by Dylan Asdale · published by
+  <strong>Asdale Dynamics, LLC</strong> · MIT licensed</p>
+</footer>
+
+</main>
+<script>
+  // Smooth jump for the little in-page nav (progressive enhancement only).
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      const t = document.querySelector(a.getAttribute('href'));
+      if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth' }); }
+    });
+  });
+</script>
+</body>
+</html>
